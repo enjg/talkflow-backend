@@ -1,172 +1,92 @@
-"""统计分析 API"""
-from datetime import date, timedelta
-from typing import Optional
+"""管理端 - 统计数据"""
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, func, cast, Date
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.dependencies import get_db
-from app.domain.models.user import User
-from app.domain.models.session import Session
-from app.domain.models.message import Message
-from app.domain.models.user_stats import UserStats
-from app.api.v1.admin.deps import require_admin
+from datetime import datetime, timedelta, timezone
+from ....dependencies import get_db
+from ....domain.models.user import User
+from ....domain.models.session import Session
+from ....domain.models.message import Message
 
 router = APIRouter()
+CST = timezone(timedelta(hours=8))
 
 
-@router.get("/overview")
-async def stats_overview(
-    db: AsyncSession = Depends(get_db),
-    admin=Depends(require_admin),
-):
+@router.get("/stats/overview")
+async def stats_overview(db: AsyncSession = Depends(get_db)):
     """统计总览"""
-    # 用户总数
-    total_users = (await db.execute(
-        select(func.count()).select_from(User)
-    )).scalar() or 0
-
-    # 活跃用户数
+    total_users = (await db.execute(select(func.count(User.id)))).scalar() or 0
     active_users = (await db.execute(
-        select(func.count()).select_from(User).where(User.is_active == True)
+        select(func.count(User.id)).where(User.is_active == True)
     )).scalar() or 0
+    total_sessions = (await db.execute(select(func.count(Session.id)))).scalar() or 0
+    total_messages = (await db.execute(select(func.count(Message.id)))).scalar() or 0
 
-    # 今日新增用户
-    today = date.today()
-    today_new_users = (await db.execute(
-        select(func.count()).select_from(User)
-        .where(cast(User.created_at, Date) == today)
+    # 今日新增
+    today = datetime.now(CST).replace(hour=0, minute=0, second=0, microsecond=0)
+    new_users_today = (await db.execute(
+        select(func.count(User.id)).where(User.created_at >= today)
     )).scalar() or 0
-
-    # 会话总数
-    total_sessions = (await db.execute(
-        select(func.count()).select_from(Session)
+    new_sessions_today = (await db.execute(
+        select(func.count(Session.id)).where(Session.created_at >= today)
     )).scalar() or 0
-
-    # 今日新增会话
-    today_sessions = (await db.execute(
-        select(func.count()).select_from(Session)
-        .where(cast(Session.created_at, Date) == today)
-    )).scalar() or 0
-
-    # 消息总数
-    total_messages = (await db.execute(
-        select(func.count()).select_from(Message)
-    )).scalar() or 0
-
-    # 今日消息数
-    today_messages = (await db.execute(
-        select(func.count()).select_from(Message)
-        .where(cast(Message.created_at, Date) == today)
-    )).scalar() or 0
-
-    # 总 token 消耗
-    total_tokens = (await db.execute(
-        select(func.coalesce(func.sum(Message.tokens_used), 0))
-    )).scalar() or 0
-
-    # 今日 token 消耗
-    today_tokens = (await db.execute(
-        select(func.coalesce(func.sum(Message.tokens_used), 0))
-        .where(cast(Message.created_at, Date) == today)
-    )).scalar() or 0
-
-    # 平均每会话消息数
-    avg_messages = round(total_messages / total_sessions, 1) if total_sessions > 0 else 0
 
     return {
-        "code": 0,
-        "data": {
-            "users": {
-                "total": total_users,
-                "active": active_users,
-                "today_new": today_new_users,
-            },
-            "sessions": {
-                "total": total_sessions,
-                "today_new": today_sessions,
-            },
-            "messages": {
-                "total": total_messages,
-                "today": today_messages,
-                "avg_per_session": avg_messages,
-            },
-            "tokens": {
-                "total": total_tokens,
-                "today": today_tokens,
-            },
-        },
+        "total_users": total_users,
+        "active_users": active_users,
+        "total_sessions": total_sessions,
+        "total_messages": total_messages,
+        "new_users_today": new_users_today,
+        "new_sessions_today": new_sessions_today,
     }
 
 
-@router.get("/daily")
+@router.get("/stats/daily")
 async def stats_daily(
-    days: int = Query(7, ge=1, le=90, description="查询天数"),
+    days: int = Query(7, ge=1, le=90),
     db: AsyncSession = Depends(get_db),
-    admin=Depends(require_admin),
 ):
-    """每日趋势数据"""
-    today = date.today()
-    start_date = today - timedelta(days=days - 1)
+    """每日趋势"""
+    start = datetime.now(CST) - timedelta(days=days)
 
     # 每日新用户
-    new_users_result = await db.execute(
+    result = await db.execute(
         select(
-            cast(User.created_at, Date).label("day"),
-            func.count().label("count"),
+            cast(User.created_at, Date).label("date"),
+            func.count(User.id).label("count"),
         )
-        .where(cast(User.created_at, Date) >= start_date)
-        .group_by("day")
-        .order_by("day")
+        .where(User.created_at >= start)
+        .group_by(cast(User.created_at, Date))
+        .order_by(cast(User.created_at, Date))
     )
-    new_users_map = {str(row.day): row.count for row in new_users_result}
+    daily_users = [{"date": str(r[0]), "count": r[1]} for r in result.all()]
 
-    # 每日会话数
-    sessions_result = await db.execute(
+    # 每日新会话
+    result = await db.execute(
         select(
-            cast(Session.created_at, Date).label("day"),
-            func.count().label("count"),
+            cast(Session.created_at, Date).label("date"),
+            func.count(Session.id).label("count"),
         )
-        .where(cast(Session.created_at, Date) >= start_date)
-        .group_by("day")
-        .order_by("day")
+        .where(Session.created_at >= start)
+        .group_by(cast(Session.created_at, Date))
+        .order_by(cast(Session.created_at, Date))
     )
-    sessions_map = {str(row.day): row.count for row in sessions_result}
+    daily_sessions = [{"date": str(r[0]), "count": r[1]} for r in result.all()]
 
-    # 每日消息数 & token 消耗
-    messages_result = await db.execute(
+    # 每日消息
+    result = await db.execute(
         select(
-            cast(Message.created_at, Date).label("day"),
-            func.count().label("count"),
-            func.coalesce(func.sum(Message.tokens_used), 0).label("tokens"),
+            cast(Message.created_at, Date).label("date"),
+            func.count(Message.id).label("count"),
         )
-        .where(cast(Message.created_at, Date) >= start_date)
-        .group_by("day")
-        .order_by("day")
+        .where(Message.created_at >= start)
+        .group_by(cast(Message.created_at, Date))
+        .order_by(cast(Message.created_at, Date))
     )
-    messages_map = {}
-    tokens_map = {}
-    for row in messages_result:
-        day_str = str(row.day)
-        messages_map[day_str] = row.count
-        tokens_map[day_str] = row.tokens
-
-    # 组装每日数据
-    daily_data = []
-    for i in range(days):
-        d = start_date + timedelta(days=i)
-        day_str = str(d)
-        daily_data.append({
-            "date": day_str,
-            "new_users": new_users_map.get(day_str, 0),
-            "sessions": sessions_map.get(day_str, 0),
-            "messages": messages_map.get(day_str, 0),
-            "tokens": tokens_map.get(day_str, 0),
-        })
+    daily_messages = [{"date": str(r[0]), "count": r[1]} for r in result.all()]
 
     return {
-        "code": 0,
-        "data": {
-            "days": days,
-            "items": daily_data,
-        },
+        "daily_users": daily_users,
+        "daily_sessions": daily_sessions,
+        "daily_messages": daily_messages,
     }
