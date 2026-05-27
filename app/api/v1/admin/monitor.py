@@ -1,134 +1,64 @@
-"""系统监控 API"""
-import os
-import time
-import platform
-from fastapi import APIRouter, Depends
-from app.api.v1.admin.deps import require_admin
+"""管理端 - 监控中心"""
+import shutil
+import psutil
+from fastapi import APIRouter
 
 router = APIRouter()
 
 
-def _get_cpu_info() -> dict:
-    """获取 CPU 信息"""
-    try:
-        import psutil
-        cpu_percent = psutil.cpu_percent(interval=0.5)
-        cpu_count = psutil.cpu_count(logical=True)
-        cpu_freq = psutil.cpu_freq()
-        return {
-            "percent": cpu_percent,
-            "count": cpu_count,
-            "freq_current": round(cpu_freq.current, 0) if cpu_freq else None,
-            "freq_max": round(cpu_freq.max, 0) if cpu_freq else None,
-        }
-    except ImportError:
-        # 回退: 读取 /proc/loadavg
-        try:
-            with open("/proc/loadavg", "r") as f:
-                parts = f.read().strip().split()
-            return {
-                "percent": None,
-                "load_1m": float(parts[0]),
-                "load_5m": float(parts[1]),
-                "load_15m": float(parts[2]),
-                "count": os.cpu_count(),
-            }
-        except Exception:
-            return {"percent": None, "count": os.cpu_count()}
+@router.get("/monitor/system")
+async def system_monitor():
+    """系统资源监控"""
+    cpu_percent = psutil.cpu_percent(interval=0.5)
+    memory = psutil.virtual_memory()
+    disk = shutil.disk_usage("/")
 
-
-def _get_memory_info() -> dict:
-    """获取内存信息"""
-    try:
-        import psutil
-        mem = psutil.virtual_memory()
-        return {
-            "total": mem.total,
-            "available": mem.available,
-            "used": mem.used,
-            "percent": mem.percent,
-            "total_gb": round(mem.total / (1024 ** 3), 2),
-            "used_gb": round(mem.used / (1024 ** 3), 2),
-        }
-    except ImportError:
-        # 回退: 读取 /proc/meminfo
-        try:
-            info = {}
-            with open("/proc/meminfo", "r") as f:
-                for line in f:
-                    parts = line.split(":")
-                    if len(parts) == 2:
-                        key = parts[0].strip()
-                        val = parts[1].strip().split()[0]
-                        info[key] = int(val) * 1024  # kB -> bytes
-            total = info.get("MemTotal", 0)
-            available = info.get("MemAvailable", 0)
-            used = total - available
-            return {
-                "total": total,
-                "available": available,
-                "used": used,
-                "percent": round(used / total * 100, 1) if total > 0 else 0,
-                "total_gb": round(total / (1024 ** 3), 2),
-                "used_gb": round(used / (1024 ** 3), 2),
-            }
-        except Exception:
-            return {"total": 0, "percent": 0}
-
-
-def _get_disk_info() -> dict:
-    """获取磁盘信息"""
-    try:
-        import psutil
-        disk = psutil.disk_usage("/")
-        return {
-            "total": disk.total,
-            "used": disk.used,
-            "free": disk.free,
-            "percent": disk.percent,
-            "total_gb": round(disk.total / (1024 ** 3), 2),
-            "used_gb": round(disk.used / (1024 ** 3), 2),
-            "free_gb": round(disk.free / (1024 ** 3), 2),
-        }
-    except Exception:
-        import shutil
-        total, used, free = shutil.disk_usage("/")
-        return {
-            "total": total,
-            "used": used,
-            "free": free,
-            "percent": round(used / total * 100, 1) if total > 0 else 0,
-            "total_gb": round(total / (1024 ** 3), 2),
-            "used_gb": round(used / (1024 ** 3), 2),
-            "free_gb": round(free / (1024 ** 3), 2),
-        }
-
-
-@router.get("/system")
-async def system_monitor(
-    admin=Depends(require_admin),
-):
-    """系统监控: CPU / 内存 / 磁盘"""
     return {
-        "code": 0,
-        "data": {
-            "cpu": _get_cpu_info(),
-            "memory": _get_memory_info(),
-            "disk": _get_disk_info(),
-            "server": {
-                "platform": platform.system(),
-                "platform_version": platform.version(),
-                "hostname": platform.node(),
-                "python_version": platform.python_version(),
-                "uptime_seconds": int(time.time() - psutil.boot_time()) if _has_psutil() else None,
-            },
+        "cpu": {
+            "percent": cpu_percent,
+            "count": psutil.cpu_count(),
+        },
+        "memory": {
+            "total_gb": round(memory.total / (1024**3), 2),
+            "used_gb": round(memory.used / (1024**3), 2),
+            "percent": memory.percent,
+        },
+        "disk": {
+            "total_gb": round(disk.total / (1024**3), 2),
+            "used_gb": round(disk.used / (1024**3), 2),
+            "percent": round(disk.used / disk.total * 100, 1),
         },
     }
 
 
-def _has_psutil() -> bool:
-    try:
-        import psutil  # noqa: F401
-        return True
-    except ImportError:
-        return False
+@router.get("/monitor/services")
+async def service_status():
+    """服务状态检查"""
+    import socket
+
+    services = [
+        {"name": "TalkFlow API", "port": 8000, "desc": "FastAPI后端"},
+        {"name": "TalkFlow Frontend", "port": 5173, "desc": "Vue前端开发服务器"},
+        {"name": "Dashboard", "port": 8000, "path": "/dashboard", "desc": "工作看板"},
+        {"name": "Invitation", "port": 8888, "desc": "邀请函"},
+    ]
+
+    results = []
+    for svc in services:
+        port = svc["port"]
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(1)
+            ok = sock.connect_ex(("127.0.0.1", port)) == 0
+            sock.close()
+        except Exception:
+            ok = False
+
+        results.append({
+            "name": svc["name"],
+            "port": port,
+            "desc": svc["desc"],
+            "status": "running" if ok else "stopped",
+        })
+
+    return {"services": results}
