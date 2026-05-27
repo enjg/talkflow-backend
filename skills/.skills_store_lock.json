@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "skills": {
+    "github": {
+      "name": "Github",
+      "zip_url": "https://lightmake.site/api/v1/download?slug=github",
+      "source": "community",
+      "version": "1.0.0",
+      "installedAt": "2026-05-20T02:42:43Z"
+    },
+    "lint": {
+      "name": "Lint",
+      "zip_url": "https://lightmake.site/api/v1/download?slug=lint",
+      "source": "community",
+      "version": "2.0.1",
+      "installedAt": "2026-05-20T03:13:53Z"
+    },
+    "code-review": {
+      "name": "Code Review",
+      "zip_url": "https://lightmake.site/api/v1/download?slug=code-review",
+      "source": "community",
+      "version": "1.0.0",
+      "installedAt": "2026-05-20T03:14:40Z"
+    },
+    "playwright": {
+      "name": "Playwright (Automation + MCP + Scraper)",
+      "zip_url": "https://lightmake.site/api/v1/download?slug=playwright",
+      "source": "community",
+      "version": "1.0.3",
+      "installedAt": "2026-05-20T03:15:06Z"
+    },
+    "planning-with-files": {
+      "name": "Planning with files",
+      "zip_url": "https://lightmake.site/api/v1/download?slug=planning-with-files",
+      "source": "community",
+      "version": "2.36.1",
+      "installedAt": "2026-05-20T03:15:36Z"
+    }
+  }
+}
